@@ -1,4 +1,4 @@
-# RSP IFC-SG Viewer & Checker
+# RSP CX Takeoff
 
 A browser-based IFC viewer that queries and checks models against the **CORENET X
 IFC-SG mapping** — the same workbook the agencies use to interrogate submissions.

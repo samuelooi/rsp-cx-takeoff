@@ -1,5 +1,5 @@
 /**
- * RSP IFC-SG Viewer & Checker — application wiring.
+ * RSP CX Takeoff — application wiring.
  *
  * Presets come straight from the CORENET X industry mapping: every component the
  * agencies query for becomes a clickable target, and every property they require
@@ -1092,20 +1092,31 @@ function renderAgencyBubbles() {
 
 /** Folds targets (already scoped and ordered) into component groups. */
 /**
- * The targets in scope folded into one group per component. Several
- * authorities query the same component (Door: BCA, NEA and SCDF), so a
- * component is one bubble whatever asks for it; `agencies` records who does.
+ * The targets in scope folded into one group per RSP_Category — RSP's own
+ * triage of the workbook, not the authority's, and not the "Identified
+ * Component" column (a category routinely spans several components: "Rooms"
+ * covers every named room type, "Area (AGF)" every bonus-GFA space). A row
+ * nobody has triaged yet falls under "Uncategorised" rather than being
+ * dropped. Several authorities can query the same category (Door: BCA, NEA
+ * and SCDF), so a category is one bubble whatever asks for it; `agencies`
+ * records who does.
  */
+const UNCATEGORISED = 'Uncategorised';
+
 function componentGroups(targets) {
   const groups = new Map();
   for (const t of targets) {
-    let g = groups.get(t.component);
-    if (!g) groups.set(t.component, (g = { key: t.component, component: t.component, agencies: [], targets: [] }));
+    const key = t.category || UNCATEGORISED;
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = { key, category: key, agencies: [], targets: [] }));
     if (!g.agencies.includes(t.agency)) g.agencies.push(t.agency);
     g.targets.push(t);
   }
-  return [...groups.values()].sort((a, b) =>
-    a.component.localeCompare(b.component, undefined, { sensitivity: 'base' }));
+  return [...groups.values()].sort((a, b) => {
+    if (a.category === UNCATEGORISED) return 1;
+    if (b.category === UNCATEGORISED) return -1;
+    return a.category.localeCompare(b.category, undefined, { sensitivity: 'base' });
+  });
 }
 
 /** Every element any of the group's selectors matches, each once. */
@@ -1181,13 +1192,15 @@ function renderTree() {
 
   const active = selection ? selection.group.key : null;
   const parts = [`<div class="q-head">Components<span class="qc">${groups.length}</span></div>`];
-  // One flat row: which authority asks is in the tooltip, not the layout.
+  // One flat row, one bubble per RSP_Category: which authority asks, and
+  // which "Identified Component" rows feed a category, are in the tooltip,
+  // not the layout.
   parts.push(`<div class="bubble-row plain">${groups.map((g) => {
     const n = index ? groupElements(g).length : null;
     const title = [g.agencies.map((a) => (a === AGENCY_ALL ? 'All authorities' : a)).join(', '),
-      ...g.targets.map((t) => `${t.entity} · ${describeSubtypes(t.subtypes)}`)].join('\n');
+      ...g.targets.map((t) => `${t.component}: ${t.entity} · ${describeSubtypes(t.subtypes)}`)].join('\n');
     return `<button class="bubble comp${g.key === active ? ' active' : ''}${n === 0 ? ' zero' : ''}"
-      data-g="${esc(g.key)}" title="${esc(title)}">${esc(g.component)}${
+      data-g="${esc(g.key)}" title="${esc(title)}">${esc(g.category)}${
         n === null ? '' : `<span class="bc">${n}</span>`}</button>`;
   }).join('')}</div>`);
 
@@ -1195,7 +1208,7 @@ function renderTree() {
   if (selection) {
     const group = selection.group;
     props = groupProperties(group);
-    parts.push(`<div class="q-head">Properties · ${esc(group.component)}<span class="qc">${props.length}</span></div>`);
+    parts.push(`<div class="q-head">Properties · ${esc(group.category)}<span class="qc">${props.length}</span></div>`);
     if (!props.length) {
       parts.push('<div class="empty-note">The mapping lists no properties for this component — it only declares which elements belong to it.</div>');
     } else {
@@ -1234,7 +1247,7 @@ function selectComponent(group) {
   }
   const elements = groupElements(group);
   if (!elements.length) {
-    toast(`No elements in the loaded models match ${group.component}.`);
+    toast(`No elements in the loaded models match ${group.category}.`);
     return;
   }
   // Querying spaces while spaces are hidden would colour nothing; the request to
@@ -1254,7 +1267,7 @@ function selectComponent(group) {
     .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
     .map(([label, els], i) => ({ label, colour: PALETTE[i % PALETTE.length], elements: els, missing: false }));
   el.legendTitle.innerHTML =
-    `${esc(group.component)}<small>${esc(group.agencies.join(', '))} · ${elements.length} elements · ${kinds.size} kind${kinds.size === 1 ? '' : 's'}</small>`;
+    `${esc(group.category)}<small>${esc(group.agencies.join(', '))} · ${elements.length} elements · ${kinds.size} kind${kinds.size === 1 ? '' : 's'}</small>`;
 
   renderTree();
   renderLegend();
@@ -1265,7 +1278,7 @@ function selectComponent(group) {
 function selectProperty(group, req) {
   const elements = propertyElements(group, req);
   if (!elements.length) {
-    toast(`No elements in the loaded models carry ${req.pset}.${req.prop} under ${group.component}.`);
+    toast(`No elements in the loaded models carry ${req.pset}.${req.prop} under ${group.category}.`);
     return;
   }
   if (elements.some((e) => e.canonicalEntity === 'IFCSPACE') && !spacesVisible) setSpacesVisible(true);
@@ -1281,7 +1294,7 @@ function selectProperty(group, req) {
     missing: g.missing,
   }));
   el.legendTitle.innerHTML =
-    `${esc(req.prop)}<small>${esc(group.component)} · ${esc(req.pset)} · ${elements.length} elements</small>`;
+    `${esc(req.prop)}<small>${esc(group.category)} · ${esc(req.pset)} · ${elements.length} elements</small>`;
   // A property query can be fixed in bulk from the legend.
   el.btnSetValue.hidden = !elements.some(canEdit);
   el.legendEdit.classList.remove('visible');
@@ -3054,7 +3067,7 @@ let bcfSelected = null;
 const AUTHOR_KEY = 'rsp-ifcsg.author';
 
 function bcfAuthor() {
-  return (el.bcfAuthor.value || '').trim() || 'RSP IFC-SG Viewer';
+  return (el.bcfAuthor.value || '').trim() || 'RSP CX Takeoff';
 }
 
 const TYPE_CHIP = { fail: 'fail', error: 'fail', alert: 'alert', warning: 'alert', info: 'info' };

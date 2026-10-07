@@ -9,18 +9,26 @@
 
   Columns on the CX Pilot Mapping sheet are found by header text, not position,
   so a column inserted into the workbook does not shift the rest. Headers used:
-      S/N, Agency, Gateway, Identified Component, Identified parameters,
-      Suggested Revit Representation, Suggested Discipline, IFC4 Entities,
-      IFC Sub Types, Property Set, Property Name, Property Type, Property Unit,
-      IFC4 Material Set, Accepted Values, Sample Value
+      S/N, Agency, Gateway, RSP_Priority, RSP_Category, RSP_Typology,
+      Identified Component, Identified parameters, Suggested Revit Representation,
+      Suggested Discipline, IFC4 Entities, IFC Sub Types, Property Set,
+      Property Name, Property Type, Property Unit, IFC4 Material Set,
+      Accepted Values, Sample Value
 
   "Gateway" is RSP's own column (DG = Design Gateway, CG = Construction Gateway),
   added to the authority workbook. It is read per row: within one component
   the Design Gateway can ask for fewer properties than the Construction Gateway.
+
+  RSP_Priority / RSP_Category / RSP_Typology are RSP's own triage columns,
+  added ahead of "Identified Component" in the Dec 2025 revision. Only a
+  minority of rows carry them so far (the rest is the original CORENET X
+  mapping, not yet triaged) — a blank RSP_Category is expected, not an error.
+  The query tree groups components by RSP_Category, with the untriaged ones
+  under "Uncategorised".
 #>
 [CmdletBinding()]
 param(
-  [string]$Xlsx = "C:\Users\tx_samuel_ooi\OneDrive - RSP ARCHITECTS PLANNERS & ENGINEERS (PTE) LTD\Documents\20260305 IFC Model Checker\industry-mapping-4-dec-2025139335b79c8943d695c7b84984c9d50b_gateway mapping.xlsx",
+  [string]$Xlsx = "C:\Users\tx_samuel_ooi\OneDrive - RSP ARCHITECTS PLANNERS & ENGINEERS (PTE) LTD\Documents\0 - RSP IFC Model Viewer\Settings\industry-mapping-4-dec-2025139335b79c8943d695c7b84984c9d50b_gateway mapping.xlsx",
   [string]$Out = '',
 
   # Which "Suggested Discipline" rows to keep. Defaults to the architectural
@@ -180,8 +188,13 @@ try {
   # lines and carry parenthetical notes, so match on a leading fragment.
   $header = $mapRows[0]
   $col = @{}
+  # A value can be one label or a list of candidate labels to try in order —
+  # the Dec 2025 revision renamed "Gateway" to "RSP_Gateway" alongside adding
+  # the RSP_Priority/Category/Typology columns, and older workbooks may still
+  # turn up with the bare name.
   $wanted = [ordered]@{
-    sn = 'S/N'; agency = 'Agency'; gateway = 'Gateway'
+    sn = 'S/N'; agency = 'Agency'; gateway = @('RSP_Gateway', 'Gateway')
+    rspPriority = 'RSP_Priority'; rspCategory = 'RSP_Category'; rspTypology = 'RSP_Typology'
     component = 'Identified Component'; parameter = 'Identified parameters'
     revit = 'Suggested Revit'; discipline = 'Suggested Discipline'
     entity = 'IFC4 Entities'; subtypes = 'IFC Sub Types'
@@ -189,14 +202,21 @@ try {
     unit = 'Property Unit'; materialSet = 'IFC4 Material Set'
     accepted = 'Accepted Values'; sample = 'Sample Value'
   }
+  # Optional: not every workbook revision has RSP's own triage columns yet.
+  $optionalCols = @('rspPriority', 'rspCategory', 'rspTypology')
   foreach ($key in $wanted.Keys) {
-    $label = $wanted[$key]
-    for ($c = 0; $c -lt $header.Length; $c++) {
-      $h = ($header[$c] -replace '\s+', ' ').Trim()
-      if ($h.StartsWith($label, [System.StringComparison]::OrdinalIgnoreCase)) { $col[$key] = $c; break }
+    $labels = @($wanted[$key])
+    foreach ($label in $labels) {
+      for ($c = 0; $c -lt $header.Length; $c++) {
+        $h = ($header[$c] -replace '\s+', ' ').Trim()
+        if ($h.StartsWith($label, [System.StringComparison]::OrdinalIgnoreCase)) { $col[$key] = $c; break }
+      }
+      if ($col.ContainsKey($key)) { break }
     }
     if (-not $col.ContainsKey($key)) {
+      $label = $labels[0]
       if ($key -eq 'gateway') { Write-Warning "No 'Gateway' column found; every rule will be Construction Gateway only." }
+      elseif ($optionalCols -contains $key) { Write-Warning "No '$label' column found; every rule's $key will be blank." }
       else { throw "Column '$label' not found on the CX Pilot Mapping sheet." }
     }
   }
@@ -229,6 +249,11 @@ try {
         agency      = $agency
         # 'design' | 'construction' | null. Per row, not per component.
         gateway     = (Parse-Gateway (Cell $r 'gateway'))
+        # RSP's own triage, not the authority's: which of the query tree's
+        # groups this component's rows belong under. Blank on untriaged rows.
+        rspPriority = Norm (Cell $r 'rspPriority')
+        rspCategory = Norm (Cell $r 'rspCategory')
+        rspTypology = Norm (Cell $r 'rspTypology')
         component   = Norm (Cell $r 'component')
         parameter   = Norm (Cell $r 'parameter')
         discipline  = $disc
@@ -280,6 +305,7 @@ try {
     }
     agencies    = @($ruleArr | ForEach-Object { $_.agency } | Where-Object { $_ } | Sort-Object -Unique)
     disciplines = @($ruleArr | ForEach-Object { $_.discipline } | Where-Object { $_ } | Sort-Object -Unique)
+    categories  = @($ruleArr | ForEach-Object { $_.rspCategory } | Where-Object { $_ } | Sort-Object -Unique)
     entities    = @($ruleArr | ForEach-Object { $_.entity } | Where-Object { $_ } | Sort-Object -Unique)
     psets       = @($ruleArr | ForEach-Object { $_.pset } | Where-Object { $_ } | Sort-Object -Unique)
     rules       = $ruleArr
@@ -309,6 +335,8 @@ try {
     $gw.construction++
   }
   Write-Output ("  gateway:      design {0} (also in construction), construction {1}, blank {2}" -f $gw.design, $gw.construction, $gw.blank)
+  $untriaged = @($ruleArr | Where-Object { -not $_.rspCategory }).Count
+  Write-Output ("  RSP_Category: {0} categories, {1} of {2} rules untriaged" -f $doc.categories.Count, $untriaged, $ruleArr.Count)
   Write-Output ("  space values: {0} properties" -f $spaceValuesOut.Keys.Count)
 }
 finally {

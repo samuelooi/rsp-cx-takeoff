@@ -189,6 +189,9 @@ export function indexRuleset(raw, overlay = null) {
           gateway,
           agency: rule.agency,
           component: rule.component,
+          // RSP's own triage (blank on rows not yet categorised), not the
+          // authority's — this is what the query tree groups components by.
+          category: rule.rspCategory || null,
           discipline: rule.discipline,
           entity: rule.entity,
           canonicalEntity: canonicalEntity(rule.entity),
@@ -197,6 +200,10 @@ export function indexRuleset(raw, overlay = null) {
         };
         targets.set(key, target);
       }
+      // The workbook can carry the category on one row of a component and leave
+      // it blank on another (e.g. a placeholder subtype row) — take the first
+      // one seen rather than let a later blank row erase it.
+      if (!target.category && rule.rspCategory) target.category = rule.rspCategory;
       if (rule.kind === 'requirement') target.requirements.push(rule);
     }
   }
